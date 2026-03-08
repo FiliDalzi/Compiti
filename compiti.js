@@ -22,7 +22,6 @@ async function aggiornaCompiti() {
 
   const USER = process.env.CLASSEVIVA_USER;
   const PASS = process.env.CLASSEVIVA_PASS;
-  const CHROME_PATH = process.env.CHROME_PATH;
 
   const browser = await puppeteer.launch({
     headless: true,
