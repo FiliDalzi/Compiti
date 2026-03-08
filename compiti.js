@@ -24,7 +24,7 @@ async function aggiornaCompiti() {
   const PASS = process.env.CLASSEVIVA_PASS;
 
   const browser = await puppeteer.launch({
-    headless: true,
+    headless: "new",
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
