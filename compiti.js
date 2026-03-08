@@ -25,7 +25,7 @@ async function aggiornaCompiti() {
 
   const browser = await puppeteer.launch({
     headless: true,
-    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+    executablePath: "./.cache/puppeteer/chrome/linux-146.0.7680.31/chrome-linux64/chrome",
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
