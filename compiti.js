@@ -1045,10 +1045,6 @@ app.post('/unlock-notes', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 
-app.get('/', (req, res) => {
-  res.send("✅ Script dei compiti eseguito correttamente!");
-});
-
 app.listen(PORT, () => {
   console.log(`Server attivo sulla porta ${PORT}`);
 });
