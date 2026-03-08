@@ -914,6 +914,7 @@ if (!fs.existsSync(notesFile)) {
 
 const app = express();
 app.use(express.json());
+app.use('/note_data', express.static(`${process.cwd()}/note_data`));
 app.use(express.static(process.cwd()));
 
 const storage = multer.diskStorage({
@@ -1044,6 +1045,10 @@ app.post('/unlock-notes', async (req, res) => {
 
 
 const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+  res.sendFile(`${process.cwd()}/compiti.html`);
+});
 
 app.listen(PORT, () => {
   console.log(`Server attivo sulla porta ${PORT}`);
