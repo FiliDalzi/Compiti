@@ -26,8 +26,11 @@ async function aggiornaCompiti() {
 
   const browser = await puppeteer.launch({
     headless: true,
-    // defaultViewport: null
-    args: ["--no-sandbox", "--disable-setuid-sandbox"]
+    executablePath: '/opt/render/.cache/puppeteer/chrome/linux-146.0.7680.31/chrome-linux64/chrome',
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox'
+    ]
   });
 
   const page = await browser.newPage();
