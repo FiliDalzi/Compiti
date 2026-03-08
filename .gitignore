@@ -4,3 +4,4 @@ note_data
 compiti.html
 *.log
 .DS_Store
+.cache
