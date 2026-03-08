@@ -29,7 +29,8 @@ async function aggiornaCompiti() {
   });
 
   const page = await browser.newPage();
-
+  await page.goto('https://example.com');
+  
   try {
     console.log("🚀 Accesso a Classeviva...");
     await page.goto('https://web.spaggiari.eu', { waitUntil: 'networkidle2' });
@@ -892,7 +893,7 @@ async function aggiornaCompiti() {
 };
 
 // prima esecuzione
-aggiornaCompiti();
+aggiornaCompiti().catch(console.error);
 
 // aggiornamento ogni 2 ore
 setInterval(aggiornaCompiti, 2 * 60 * 60 * 1000);
