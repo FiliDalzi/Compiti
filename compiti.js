@@ -25,7 +25,8 @@ async function aggiornaCompiti() {
 
   const browser = await puppeteer.launch({
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    executablePath: puppeteer.executablePath() // <- forza Puppeteer a usare il suo Chromium
   });
 
   const page = await browser.newPage();
@@ -1044,6 +1045,10 @@ app.post('/unlock-notes', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 
+app.get('/', (req, res) => {
+  res.send("✅ Script dei compiti eseguito correttamente!");
+});
+
 app.listen(PORT, () => {
-  console.log("Server attivo sulla porta", PORT);
+  console.log(`Server attivo sulla porta ${PORT}`);
 });
