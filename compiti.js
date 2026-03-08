@@ -1,4 +1,4 @@
-const puppeteer = require('puppeteer-core');
+const puppeteer = require('puppeteer');
 const fs = require('fs');
 const { exec } = require('child_process');
 const express = require('express');
@@ -25,7 +25,6 @@ async function aggiornaCompiti() {
   const CHROME_PATH = process.env.CHROME_PATH;
 
   const browser = await puppeteer.launch({
-    executablePath: CHROME_PATH,
     headless: true,
     // defaultViewport: null
     args: ["--no-sandbox", "--disable-setuid-sandbox"]
