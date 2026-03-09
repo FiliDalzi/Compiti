@@ -893,12 +893,6 @@ async function aggiornaCompiti() {
   }
 };
 
-// prima esecuzione
-aggiornaCompiti().catch(console.error);
-
-// aggiornamento ogni 2 ore
-setInterval(aggiornaCompiti, 2 * 60 * 60 * 1000);
-
 /* ===== SERVER NOTE ===== */
 
 const notesDir = `${process.cwd()}/note_data`;
@@ -1050,6 +1044,24 @@ app.get('/', (req, res) => {
   res.sendFile(`${process.cwd()}/compiti.html`);
 });
 
+app.get('/', (req, res) => {
+  res.sendFile(`${process.cwd()}/compiti.html`);
+});
+
+// ← QUI
+app.get('/ready', (req, res) => {
+  const html = fs.readFileSync(`${process.cwd()}/compiti.html`, 'utf8');
+  if (html.includes('Caricamento...')) {
+    res.status(503).send('not ready');
+  } else {
+    res.status(200).send('ready');
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`Server attivo sulla porta ${PORT}`);
+});
+
 // Aggiungi PRIMA di app.listen()
 const placeholderPath = `${process.cwd()}/compiti.html`;
 if (!fs.existsSync(placeholderPath)) {
@@ -1059,7 +1071,12 @@ if (!fs.existsSync(placeholderPath)) {
 <head>
   <meta charset="UTF-8">
   <title>Caricamento...</title>
-  <meta http-equiv="refresh" content="5">
+  <script>
+  setInterval(async () => {
+    const res = await fetch('/ready');
+    if (res.ok) window.location.reload();
+  }, 5000);
+</script>
   <style>
     body { background: #121212; color: #eaeaea; display: flex;
            justify-content: center; align-items: center; height: 100vh;
