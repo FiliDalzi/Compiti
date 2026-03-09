@@ -1050,6 +1050,39 @@ app.get('/', (req, res) => {
   res.sendFile(`${process.cwd()}/compiti.html`);
 });
 
+// Aggiungi PRIMA di app.listen()
+const placeholderPath = `${process.cwd()}/compiti.html`;
+if (!fs.existsSync(placeholderPath)) {
+  fs.writeFileSync(placeholderPath, `
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <title>Caricamento...</title>
+  <meta http-equiv="refresh" content="5">
+  <style>
+    body { background: #121212; color: #eaeaea; display: flex;
+           justify-content: center; align-items: center; height: 100vh;
+           flex-direction: column; font-family: sans-serif; margin: 0; }
+    .spinner { width: 40px; height: 40px; border: 4px solid #333;
+               border-top: 4px solid #339af0; border-radius: 50%;
+               animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="spinner"></div>
+  <p>Caricamento compiti...</p>
+</body>
+</html>
+  `);
+}
+
+// Avvia il server SUBITO
 app.listen(PORT, () => {
   console.log(`Server attivo sulla porta ${PORT}`);
 });
+
+// Poi avvia lo scraping in background
+aggiornaCompiti().catch(console.error);
+setInterval(aggiornaCompiti, 2 * 60 * 60 * 1000);
