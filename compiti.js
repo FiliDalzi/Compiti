@@ -51,8 +51,13 @@ async function aggiornaCompiti() {
 
   const browser = await puppeteer.launch({
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    executablePath: puppeteer.executablePath()
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',   // ← fondamentale su Render
+      '--disable-gpu'
+    ]
+    // rimuovi executablePath: usa quello scaricato automaticamente
   });
 
   const page = await browser.newPage();
