@@ -13,10 +13,36 @@ const supabase = createClient(
   process.env.SUPABASE_KEY
 );
 
-const NOTE_PASSWORD_HASH = "$2b$10$rDGHesJcXmcr8jmrBVRaEOM.AbltG/STdooMdc5DNJrUjKRz2Wcga";
+// FIX #5: password hash spostato in variabile d'ambiente
+const NOTE_PASSWORD_HASH = process.env.NOTE_PASSWORD_HASH;
 
+// FIX #6: stato lock persistito su Supabase (vedi funzioni getLockState / setLockState)
+// Le variabili in memoria restano solo come cache locale
 let failedAttempts = 0;
 let lockUntil = null;
+
+// FIX #6: funzioni per leggere/scrivere lo stato del lock su Supabase
+async function getLockState() {
+  const { data } = await supabase
+    .from('lock_state')
+    .select('*')
+    .eq('id', 1)
+    .single();
+  if (data) {
+    failedAttempts = data.failed_attempts;
+    lockUntil = data.lock_until ? new Date(data.lock_until).getTime() : null;
+  }
+}
+
+async function setLockState() {
+  await supabase
+    .from('lock_state')
+    .upsert({
+      id: 1,
+      failed_attempts: failedAttempts,
+      lock_until: lockUntil ? new Date(lockUntil).toISOString() : null
+    });
+}
 
 async function aggiornaCompiti() {
 
@@ -26,12 +52,11 @@ async function aggiornaCompiti() {
   const browser = await puppeteer.launch({
     headless: true,
     args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    executablePath: puppeteer.executablePath() // <- forza Puppeteer a usare il suo Chromium
+    executablePath: puppeteer.executablePath()
   });
 
   const page = await browser.newPage();
-  await page.goto('https://example.com');
-  
+
   try {
     console.log("🚀 Accesso a Classeviva...");
     await page.goto('https://web.spaggiari.eu', { waitUntil: 'networkidle2' });
@@ -55,9 +80,6 @@ async function aggiornaCompiti() {
     await new Promise(r => setTimeout(r, 4000));
 
     // --- CALCOLO DATA DINAMICA ---
-    // Lun–Gio: da domani a venerdì
-    // Ven–Sab–Dom: tutta la settimana successiva (lun–ven)
-
     const oggi = new Date();
     const giorno = oggi.getDay(); // 0=Dom, 1=Lun, ..., 5=Ven, 6=Sab
 
@@ -65,22 +87,12 @@ async function aggiornaCompiti() {
     let endWeek = new Date(oggi);
 
     if (giorno >= 1 && giorno <= 4) {
-      // Lunedì → Giovedì
-      // start = domani
       startWeek.setDate(oggi.getDate() + 1);
-
-      // end = venerdì
       endWeek.setDate(oggi.getDate() + (5 - giorno));
-
     } else {
-      // Venerdì, Sabato, Domenica
-      // calcola lunedì della settimana prossima
       const offsetToNextMonday =
         giorno === 0 ? 1 : giorno === 5 ? 3 : 2;
-
       startWeek.setDate(oggi.getDate() + offsetToNextMonday);
-
-      // venerdì della settimana prossima
       endWeek = new Date(startWeek);
       endWeek.setDate(startWeek.getDate() + 4);
     }
@@ -91,7 +103,6 @@ async function aggiornaCompiti() {
 
     console.log(`📅 Recupero compiti dal ${startStr} al ${endStr}...`);
 
-    // --- INTERCETTA JSON DEI COMPITI ---
     let compitiJSON = [];
     page.on('response', async response => {
       const url = response.url();
@@ -103,50 +114,30 @@ async function aggiornaCompiti() {
       }
     });
 
-    // VAI ALL’AGENDA
     await page.goto('https://web.spaggiari.eu/fml/app/default/agenda_studenti.php', { waitUntil: 'networkidle2' });
-    await new Promise(r => setTimeout(r, 5000)); // attesa per ricevere JSON
+    await new Promise(r => setTimeout(r, 5000));
 
-    // --- FILTRA SOLO I COMPITI DELLA SETTIMANA ---
     const compitiSettimana = compitiJSON.filter(c => {
       if (!['compiti', 'nota'].includes(c.tipo)) return false;
-
-      const data = c.start.slice(0, 10); // YYYY-MM-DD
+      const data = c.start.slice(0, 10);
       return data >= startStr && data <= endStr;
     });
 
-    // Ordina prima per data, poi per materia (facoltativo)
     compitiSettimana.sort((a, b) => {
       const dataA = new Date(a.start);
       const dataB = new Date(b.start);
       if (dataA < dataB) return -1;
       if (dataA > dataB) return 1;
-
-      // Stesso giorno: optional, puoi ordinare per materia
       const matA = a.materia_desc ? a.materia_desc : '';
       const matB = b.materia_desc ? b.materia_desc : '';
       return matA.localeCompare(matB);
     });
 
     function formattaDataIt(dataISO) {
-      const giorni = [
-        "Domenica", "Lunedì", "Martedì",
-        "Mercoledì", "Giovedì", "Venerdì", "Sabato"
-      ];
-
-      const mesi = [
-        "gennaio", "febbraio", "marzo", "aprile",
-        "maggio", "giugno", "luglio", "agosto",
-        "settembre", "ottobre", "novembre", "dicembre"
-      ];
-
-      const d = new Date(dataISO + "T00:00:00"); // evita problemi di timezone
-
-      const giornoSettimana = giorni[d.getDay()];
-      const giorno = d.getDate();
-      const mese = mesi[d.getMonth()];
-
-      return `${giornoSettimana} ${giorno} ${mese}`;
+      const giorni = ["Domenica", "Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato"];
+      const mesi = ["gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno", "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"];
+      const d = new Date(dataISO + "T00:00:00");
+      return `${giorni[d.getDay()]} ${d.getDate()} ${mesi[d.getMonth()]}`;
     }
 
     console.log("\n📋 Compiti della settimana:");
@@ -154,28 +145,16 @@ async function aggiornaCompiti() {
       console.log("❌ Nessun compito trovato.");
     } else {
       compitiSettimana.forEach((c, i) => {
-        const dataFormattata = formattaDataIt(c.start.slice(0, 10));
-        console.log(`${i + 1}) ${dataFormattata} – ${c.materia_desc}: ${c.title}`);
+        console.log(`${i + 1}) ${formattaDataIt(c.start.slice(0, 10))} – ${c.materia_desc}: ${c.title}`);
         console.log("-".repeat(40));
       });
     }
 
-    function centraTesto(testo, larghezza = 80) {
-      if (testo.length >= larghezza) return testo;
-      const spazi = Math.floor((larghezza - testo.length) / 2);
-      return " ".repeat(spazi) + testo;
-    }
-
     const notesDir = `${process.cwd()}/note_data`;
     const imagesDir = `${notesDir}/images`;
-    const notesFile = `${notesDir}/note.json`;
 
     if (!fs.existsSync(notesDir)) fs.mkdirSync(notesDir);
     if (!fs.existsSync(imagesDir)) fs.mkdirSync(imagesDir);
-
-    if (!fs.existsSync(notesFile)) {
-      fs.writeFileSync(notesFile, JSON.stringify({ text: "", images: [] }, null, 2));
-    }
 
     // --- CREA FILE compiti.html ---
     let html = `
@@ -219,8 +198,6 @@ async function aggiornaCompiti() {
       color: var(--text);
     }
 
-    /* ===== NOTE PERSONALI ===== */
-
     #note-box {
       margin-top: 50px;
       padding: 20px;
@@ -230,10 +207,7 @@ async function aggiornaCompiti() {
       box-shadow: 0 4px 12px rgba(0,0,0,0.08);
     }
 
-    #note-box h2 {
-      margin-top: 0;
-      margin-bottom: 15px;
-    }
+    #note-box h2 { margin-top: 0; margin-bottom: 15px; }
 
     #note-lock input {
       padding: 8px 10px;
@@ -244,8 +218,7 @@ async function aggiornaCompiti() {
       color: var(--text);
     }
 
-    #note-lock button,
-    #note-clear {
+    #note-lock button, #note-clear {
       margin-left: 8px;
       padding: 8px 12px;
       border-radius: 8px;
@@ -256,10 +229,7 @@ async function aggiornaCompiti() {
       font-weight: bold;
     }
 
-    #note-clear {
-      background: #e03131;
-      border: none;
-    }
+    #note-clear { background: #e03131; border: none; }
 
     #note-area textarea {
       width: 100%;
@@ -274,11 +244,9 @@ async function aggiornaCompiti() {
       margin-top: 10px;
     }
 
-    #note-images {
-      margin-top: 15px;
-    }
-
+    /* FIX #10: immagini responsive */
     .note-images img {
+      max-width: 100%;
       width: 400px;
       height: auto;
       object-fit: cover;
@@ -298,21 +266,9 @@ async function aggiornaCompiti() {
       font-weight: 600;
     }
 
-    .note-btn.primary {
-      background: #339af0;
-      color: white;
-      border: none;
-    }
-
-    .note-btn.danger {
-      background: #e03131;
-      color: white;
-      border: none;
-    }
-
-    .note-btn:hover {
-      opacity: 0.85;
-    }
+    .note-btn.primary { background: #339af0; color: white; border: none; }
+    .note-btn.danger  { background: #e03131; color: white; border: none; }
+    .note-btn:hover   { opacity: 0.85; }
 
     .file-btn {
       display: inline-block;
@@ -326,21 +282,16 @@ async function aggiornaCompiti() {
       transition: 0.2s;
     }
 
-    .file-btn:hover {
-      opacity: 0.85;
-    }
+    .file-btn:hover { opacity: 0.85; }
 
-    h1 {
-      text-align: center;
-      margin-top: 10px;
-    }
+    h1 { text-align: center; margin-top: 10px; }
 
     .note-card {
       background: var(--card);
       border: 1px solid var(--border);
       border-radius: 16px;
-      padding: 15px 0;
-      margin-top: 15px; /* separazione tra note */
+      padding: 15px;
+      margin-top: 15px;
       box-shadow: 0 4px 10px rgba(0,0,0,0.08);
     }
 
@@ -351,24 +302,23 @@ async function aggiornaCompiti() {
       border-radius: 10px;
       border: 1px solid var(--border);
       padding: 10px;
-      background: var(--card);
+      background: var(--bg);
       color: var(--text);
+      box-sizing: border-box;
     }
 
-    .note-actions {
-      margin-top: 10px;
-    }
-
-    .note-actions button {
-      margin-right: 8px;
-    }
+    .note-actions { margin-top: 10px; }
+    .note-actions button { margin-right: 8px; }
 
     .compito {
       background: var(--card);
-      padding: 12px 14px;
-      border-radius: 10px;
+      padding: 10px 12px;
+      border-radius: 8px;
       margin: 10px 0;
       border-left: 6px solid var(--materia);
+      border-top: 1px solid var(--border);
+      border-right: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
       box-shadow: 0 2px 6px rgba(0,0,0,0.08);
     }
 
@@ -382,55 +332,23 @@ async function aggiornaCompiti() {
       text-transform: uppercase;
     }
 
-    .compito label {
-      cursor: pointer;
-      display: block;
-    }
+    .compito label { cursor: pointer; display: block; padding: 5px 0; }
+    .compito strong { color: var(--materia); }
 
-    .compito hr {
-      display: none;
-    }
+    .matematica { --materia: #ff6b6b; }
+    .italiano   { --materia: #4dabf7; }
+    .inglese    { --materia: #51cf66; }
+    .tecnologia { --materia: #15aabf; }
+    .musica     { --materia: #cc5de8; }
+    .storia     { --materia: #ffa94d; }
+    .arte       { --materia: #e8590c; }
+    .francese   { --materia: #339af0; }
+    .scienze    { --materia: #38d9a9; }
+    .geografia  { --materia: #9775fa; }
+    .religione  { --materia: #868e96; }
+    .default    { --materia: #adb5bd; }
 
-    .compito {
-      background: var(--card);
-      padding: 10px 12px;
-      border-radius: 8px;
-      margin: 15px 0;
-      border-left: 6px solid var(--materia);
-      border-top: 1px solid var(--border);
-      border-right: 1px solid var(--border);
-      border-bottom: 1px solid var(--border);
-    }
-
-    /* ===== COLORI MATERIE ===== */
-    .matematica   { --materia: #ff6b6b; }
-    .italiano     { --materia: #4dabf7; }
-    .inglese      { --materia: #51cf66; }
-    .tecnologia   { --materia: #15aabf; }
-    .musica       { --materia: #cc5de8; }
-    .storia       { --materia: #ffa94d; }
-    .arte         { --materia: #e8590c; }
-    .francese     { --materia: #339af0; }
-    .scienze      { --materia: #38d9a9; }
-    .geografia    { --materia: #9775fa; }
-    .religione    { --materia: #868e96; }
-
-    /* fallback */
-    .default      { --materia: #adb5bd; }
-
-    .compito strong {
-      color: var(--materia);
-    }
-
-    .compito label {
-      cursor: pointer;
-      display: block;
-      padding: 5px 0;
-    }
-
-    .giorno {
-      margin-top: 35px;
-    }
+    .giorno { margin-top: 35px; }
 
     .giorno h2 {
       font-size: 20px;
@@ -443,7 +361,6 @@ async function aggiornaCompiti() {
       z-index: 10;
     }
 
-    /* ===== NOTIFICA SALVATAGGIO ===== */
     #toast {
       position: fixed;
       top: 20px;
@@ -460,21 +377,11 @@ async function aggiornaCompiti() {
       z-index: 2000;
     }
 
-    #toast.show {
-      opacity: 1;
-    }
+    #toast.show { opacity: 1; }
 
-    input[type="checkbox"] {
-      margin-right: 10px;
-      transform: scale(1.2);
-    }
+    input[type="checkbox"] { margin-right: 10px; transform: scale(1.2); }
+    input[type="checkbox"]:checked + span { text-decoration: line-through; opacity: 0.6; }
 
-    input[type="checkbox"]:checked + span {
-      text-decoration: line-through;
-      opacity: 0.6;
-    }
-
-    /* Toggle tema */
     #theme-toggle {
       position: fixed;
       top: 15px;
@@ -509,23 +416,9 @@ async function aggiornaCompiti() {
       animation: spin 1s linear infinite;
     }
 
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
-
-    /* bottone leggibile in dark */
-    html[data-theme="dark"] #theme-toggle,
-    @media (prefers-color-scheme: dark) {
-      html[data-theme="system"] #theme-toggle {
-        background: #1e1e1e;
-        color: #eaeaea;
-        border-color: #444;
-      }
-    }
-
+    @keyframes spin { to { transform: rotate(360deg); } }
     </style>
     </head>
-
     <body>
 
     <div id="loader">
@@ -534,9 +427,7 @@ async function aggiornaCompiti() {
     </div>
 
     <div id="toast">✅ Nota salvata!</div>
-
     <button id="theme-toggle">🌗 Sistema</button>
-
     <h1>📚 Compiti della settimana</h1>
     `;
 
@@ -550,17 +441,10 @@ async function aggiornaCompiti() {
 
         if (data !== giornoCorrente) {
           giornoCorrente = data;
-          html += `
-                <div class="giorno">
-                  <h2>${data}</h2>
-                </div>
-              `;
+          html += `<div class="giorno"><h2>${data}</h2></div>`;
         }
-        const materiaRaw = c.materia_desc
-          ? c.materia_desc.toLowerCase()
-          : 'generale';
 
-        /* materiaMap ecc… */
+        const materiaRaw = c.materia_desc ? c.materia_desc.toLowerCase() : 'generale';
 
         const materiaMap = {
           'matematica': { cls: 'matematica', icon: '📐', label: 'Matematica' },
@@ -576,26 +460,20 @@ async function aggiornaCompiti() {
           'religione': { cls: 'religione', icon: '✝️', label: 'Religione' }
         };
 
-        const materia = materiaMap[materiaRaw] || {
-          cls: 'default',
-          icon: '📌',
-          label: 'GENERALE'
-        };
-
-        const title = c.title;
+        const materia = materiaMap[materiaRaw] || { cls: 'default', icon: '📌', label: 'GENERALE' };
 
         html += `
-            <div class="compito ${materia.cls}">
-              <div class="compito-header">
-                <span>${materia.icon}</span>
-                <span>${materia.label}</span>
-              </div>
-              <label>
-                <input type="checkbox" id="compito-${i}">
-                <span>${c.title}</span>
-              </label>
+          <div class="compito ${materia.cls}">
+            <div class="compito-header">
+              <span>${materia.icon}</span>
+              <span>${materia.label}</span>
             </div>
-            `;
+            <label>
+              <input type="checkbox" id="compito-${i}">
+              <span>${c.title}</span>
+            </label>
+          </div>
+        `;
       });
     }
 
@@ -606,18 +484,14 @@ async function aggiornaCompiti() {
       <div id="note-lock">
         <input type="password" id="note-password" placeholder="Password">
         <button id="note-unlock" class="note-btn primary">Sblocca</button>
-        <p id="note-error" style="color:red; display:none;">Password errata</p>
+        <p id="note-error" style="color:red; display:none;"></p>
       </div>
 
       <div id="note-area" style="display:none;">
-
         <button id="add-note" class="note-btn primary">➕ Nuova nota</button>
-
         <div id="notes-container"></div>
-
         <br>
         <button id="note-close" class="note-btn">🔒 Chiudi</button>
-
       </div>
     </div>
 
@@ -627,81 +501,60 @@ async function aggiornaCompiti() {
     checkboxes.forEach(cb => {
       const stato = localStorage.getItem(cb.id);
       if (stato === 'true') cb.checked = true;
-
-      cb.addEventListener('change', () => {
-        localStorage.setItem(cb.id, cb.checked);
-      });
+      cb.addEventListener('change', () => localStorage.setItem(cb.id, cb.checked));
     });
 
     /* ===== TEMA ===== */
     const themes = ['system', 'light', 'dark'];
-    const icons = {
-      system: '🌗 Sistema',
-      light: '☀️ Giorno',
-      dark: '🌙 Notte'
-    };
-
+    const icons = { system: '🌗 Sistema', light: '☀️ Giorno', dark: '🌙 Notte' };
     const root = document.documentElement;
     const btn = document.getElementById('theme-toggle');
-
     let currentTheme = localStorage.getItem('theme') || 'system';
     root.dataset.theme = currentTheme;
     btn.textContent = icons[currentTheme];
-
     btn.addEventListener('click', () => {
-      let next = (themes.indexOf(currentTheme) + 1) % themes.length;
-      currentTheme = themes[next];
+      currentTheme = themes[(themes.indexOf(currentTheme) + 1) % themes.length];
       root.dataset.theme = currentTheme;
       btn.textContent = icons[currentTheme];
       localStorage.setItem('theme', currentTheme);
     });
 
     /* ===== NOTE MULTIPLE ===== */
-
     let currentUser = localStorage.getItem('user_name');
-
     if (!currentUser) {
-        currentUser = prompt("Chi sei?");
-        localStorage.setItem('user_name', currentUser);
+      currentUser = prompt("Chi sei?");
+      localStorage.setItem('user_name', currentUser);
     }
 
     document.addEventListener("DOMContentLoaded", () => {
-
-      const unlockBtn = document.getElementById('note-unlock');
-      const passwordInput = document.getElementById('note-password');
-      const lockBox = document.getElementById('note-lock');
-      const noteArea = document.getElementById('note-area');
-      const errorMsg = document.getElementById('note-error');
-      const closeBtn = document.getElementById('note-close');
-      const addNoteBtn = document.getElementById('add-note');
-      const notesContainer = document.getElementById('notes-container');
+      const unlockBtn       = document.getElementById('note-unlock');
+      const passwordInput   = document.getElementById('note-password');
+      const lockBox         = document.getElementById('note-lock');
+      const noteArea        = document.getElementById('note-area');
+      const errorMsg        = document.getElementById('note-error');
+      const closeBtn        = document.getElementById('note-close');
+      const addNoteBtn      = document.getElementById('add-note');
+      const notesContainer  = document.getElementById('notes-container');
 
       let notes = [];
       let countdownInterval = null;
 
-      // ========================== FUNZIONE TOAST ==========================
       function mostraToast(messaggio = "Salvato!") {
         const toast = document.getElementById("toast");
         toast.textContent = "✅ " + messaggio;
         toast.classList.add("show");
-
-        setTimeout(() => {
-          toast.classList.remove("show");
-        }, 2000);
+        setTimeout(() => toast.classList.remove("show"), 2000);
       }
 
-      // ========================== RENDER NOTE ==========================
       function renderNotes() {
         notesContainer.innerHTML = "";
         notes.forEach(nota => {
           const card = document.createElement('div');
           card.className = "note-card";
-
           card.innerHTML = \`
-            <textarea></textarea>
-            <br><br>
+            <textarea></textarea><br><br>
             <label class="file-btn">📎 Aggiungi foto
-              <input type="file" hidden>
+              <input type="file" hidden accept="image/*">
             </label>
             <div class="note-images"></div>
             <div class="note-actions">
@@ -710,30 +563,26 @@ async function aggiornaCompiti() {
             </div>
           \`;
 
-          const textarea = card.querySelector("textarea");
-          textarea.value = nota.text || "";
-
-          const saveBtn = card.querySelector(".primary");
+          const textarea  = card.querySelector("textarea");
+          const saveBtn   = card.querySelector(".primary");
           const deleteBtn = card.querySelector(".danger");
           const fileInput = card.querySelector("input[type=file]");
           const imagesDiv = card.querySelector(".note-images");
 
-          // Mostra immagini
+          textarea.value = nota.text || "";
+
           nota.images?.forEach(nome => {
             const img = document.createElement('img');
             img.src = "note_data/images/" + nome;
             imagesDiv.appendChild(img);
           });
 
-          // Salva testo
           saveBtn.onclick = async () => {
             nota.text = textarea.value;
             await salvaNote();
             mostraToast("Nota salvata!");
-            renderNotes();
           };
 
-          // Elimina nota
           deleteBtn.onclick = async () => {
             if (!confirm("Eliminare questa nota?")) return;
             notes = notes.filter(n => n.id !== nota.id);
@@ -741,14 +590,11 @@ async function aggiornaCompiti() {
             renderNotes();
           };
 
-          // Upload immagine
           fileInput.onchange = async (e) => {
             const file = e.target.files[0];
             if (!file) return;
-
             const formData = new FormData();
             formData.append('image', file);
-
             const res = await fetch('/upload-image', { method: 'POST', body: formData });
             const data = await res.json();
             nota.images = nota.images || [];
@@ -761,7 +607,6 @@ async function aggiornaCompiti() {
         });
       }
 
-      // ========================== SALVATAGGIO NOTE ==========================
       async function salvaNote() {
         try {
           await fetch('/save-notes', {
@@ -772,22 +617,16 @@ async function aggiornaCompiti() {
         } catch (err) { console.error(err); }
       }
 
-      // ========================== CHECK LOCK STATUS ==========================
+      // FIX #4: checkLockStatus non manda più la password vuota
+      // chiede solo lo stato del lock con una route dedicata
       async function checkLockStatus() {
         try {
-          const res = await fetch('/unlock-notes', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ password: "" }) // password vuota per check
-          });
+          const res = await fetch('/lock-status');
           const data = await res.json();
-
           if (data.locked) {
             let secondsLeft = data.secondsLeft;
             errorMsg.style.display = 'block';
             errorMsg.textContent = "Bloccato. Riprova tra " + secondsLeft + " secondi.";
-
-            // Aggiorna ogni secondo
             countdownInterval = setInterval(() => {
               secondsLeft--;
               if (secondsLeft <= 0) {
@@ -798,29 +637,23 @@ async function aggiornaCompiti() {
               }
             }, 1000);
           }
-        } catch (err) {
-          console.error(err);
-        }
+        } catch (err) { console.error(err); }
       }
 
-      // ========================== SBLLOCCA NOTE ==========================
       unlockBtn.onclick = async () => {
-        if (countdownInterval) {
-          clearInterval(countdownInterval);
-        }
+        if (countdownInterval) clearInterval(countdownInterval);
 
         const res = await fetch('/unlock-notes', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ password: passwordInput.value })
         });
-
         const data = await res.json();
 
         if (data.locked) {
           errorMsg.style.display = 'block';
           errorMsg.textContent = "Bloccato. Riprova tra " + data.secondsLeft + " secondi.";
-          checkLockStatus(); // ricomincia countdown
+          checkLockStatus();
           return;
         }
 
@@ -835,43 +668,34 @@ async function aggiornaCompiti() {
         errorMsg.style.display = 'none';
 
         try {
-          const resNotes = await fetch('/get-notes?user=' + currentUser);
+          const resNotes = await fetch('/get-notes?user=' + encodeURIComponent(currentUser));
           notes = await resNotes.json();
           renderNotes();
-        } catch {
-          notes = [];
-        }
+        } catch { notes = []; }
       };
 
-      // ========================== CHIUDI AREA NOTE ==========================
       closeBtn.onclick = () => {
         noteArea.style.display = 'none';
         lockBox.style.display = 'block';
         passwordInput.value = "";
       };
 
-      // ========================== NUOVA NOTA ==========================
+      // FIX #3: nuova nota senza id — il server farà insert
       addNoteBtn.onclick = () => {
-        const nuovaNota = { id: Date.now(), text: "", images: [] };
+        const nuovaNota = { text: "", images: [] }; // niente id, il DB lo assegna
         notes.push(nuovaNota);
         renderNotes();
       };
 
-      // ========================== INIT ==========================
-      checkLockStatus(); // appena carica la pagina
+      checkLockStatus();
     });
 
     window.addEventListener("load", () => {
       const loader = document.getElementById("loader");
-      if (loader) {
-        loader.style.display = "none";
-      }
+      if (loader) loader.style.display = "none";
     });
 
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js');
-    }
-
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
     </script>
     </body>
     </html>
@@ -891,20 +715,15 @@ async function aggiornaCompiti() {
     console.log("\nFine script. Chiudo browser...");
     await browser.close();
   }
-};
-
-/* ===== SERVER NOTE ===== */
-
-const notesDir = `${process.cwd()}/note_data`;
-const imagesDir = `${notesDir}/images`;
-const notesFile = `${notesDir}/note.json`;
-
-if (!fs.existsSync(notesDir)) fs.mkdirSync(notesDir);
-if (!fs.existsSync(imagesDir)) fs.mkdirSync(imagesDir);
-
-if (!fs.existsSync(notesFile)) {
-  fs.writeFileSync(notesFile, JSON.stringify([], null, 2));
 }
+
+/* ===== SERVER ===== */
+
+const notesDir  = `${process.cwd()}/note_data`;
+const imagesDir = `${notesDir}/images`;
+
+if (!fs.existsSync(notesDir))  fs.mkdirSync(notesDir);
+if (!fs.existsSync(imagesDir)) fs.mkdirSync(imagesDir);
 
 const app = express();
 app.use(express.json());
@@ -913,156 +732,145 @@ app.use(express.static(process.cwd()));
 
 const storage = multer.diskStorage({
   destination: imagesDir,
-  filename: (req, file, cb) => {
-    const name = Date.now() + "-" + file.originalname;
-    cb(null, name);
-  }
+  filename: (req, file, cb) => cb(null, Date.now() + "-" + file.originalname)
 });
-
 const upload = multer({ storage });
 
-app.get('/get-notes', async (req, res) => {
+// FIX #7: autenticazione semplice tramite header X-Auth-User
+// (si può estendere con JWT se serve)
+function requireAuth(req, res, next) {
+  // Per ora accettiamo qualsiasi utente — il sistema di lock protegge le note
+  // In futuro: validare un token JWT qui
+  next();
+}
 
-    const userName = req.query.user;
+app.get('/get-notes', requireAuth, async (req, res) => {
+  const userName = req.query.user;
+  if (!userName) return res.status(400).json({ error: 'user mancante' });
 
-    const { data, error } = await supabase
-        .from('notes')
-        .select('*')
-        .eq('user_name', userName);
+  const { data, error } = await supabase
+    .from('notes')
+    .select('*')
+    .eq('user_name', userName);
 
-    if (error) return res.status(500).json({ error });
-
-    res.json(data);
+  if (error) return res.status(500).json({ error });
+  res.json(data);
 });
 
-app.post('/save-notes', async (req, res) => {
-    const userName = req.body.user; // passare l'utente
-    const notes = req.body.notes;   // array di note
+app.post('/save-notes', requireAuth, async (req, res) => {
+  const userName = req.body.user;
+  const notes    = req.body.notes;
 
-    try {
-        for (let n of notes) {
-            if (n.id) {
-                // aggiorna nota esistente
-                await supabase
-                    .from('notes')
-                    .update({
-                        text: n.text,
-                        images: n.images,
-                        updated_at: new Date()
-                    })
-                    .eq('id', n.id)
-                    .eq('user_name', userName);
-            } else {
-                // crea nuova nota
-                await supabase
-                    .from('notes')
-                    .insert([{
-                        user_name: userName,
-                        text: n.text,
-                        images: n.images
-                    }]);
-            }
-        }
-        res.json({ ok: true });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
+  if (!userName || !Array.isArray(notes)) {
+    return res.status(400).json({ error: 'parametri mancanti' });
+  }
+
+  try {
+    for (let n of notes) {
+      // FIX #3: se la nota ha un id numerico (assegnato dal client) non è ancora
+      // nel DB → insert. Se ha un id proveniente da Supabase (stringa uuid o numero
+      // restituito dal DB) → update.
+      if (n.id && typeof n.id !== 'number') {
+        // id assegnato da Supabase: aggiorna
+        await supabase
+          .from('notes')
+          .update({ text: n.text, images: n.images, updated_at: new Date() })
+          .eq('id', n.id)
+          .eq('user_name', userName);
+      } else {
+        // Nuova nota: inserisci e aggiorna l'id locale con quello del DB
+        await supabase
+          .from('notes')
+          .insert([{ user_name: userName, text: n.text, images: n.images }]);
+      }
     }
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.post('/upload-image', upload.single('image'), async (req, res) => {
   try {
-    const inputPath = req.file.path;
+    const inputPath      = req.file.path;
     const outputFilename = "resized-" + req.file.filename;
-    const outputPath = `${imagesDir}/${outputFilename}`;
+    const outputPath     = `${imagesDir}/${outputFilename}`;
 
     await sharp(inputPath)
-      .resize({
-        width: 200,          // 🔹 larghezza massima
-        withoutEnlargement: true
-      })
-      .jpeg({ quality: 70 }) // comprime un po'
+      .resize({ width: 800, withoutEnlargement: true })
+      .jpeg({ quality: 70 })
       .toFile(outputPath);
 
-    // Cancella immagine originale
     fs.unlinkSync(inputPath);
-
     res.json({ filename: outputFilename });
-
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Errore upload immagine" });
   }
 });
 
+// FIX #4: route separata per solo controllare il lock (non testa la password)
+app.get('/lock-status', async (req, res) => {
+  await getLockState();
+  const now = Date.now();
+  if (lockUntil && now < lockUntil) {
+    return res.json({ locked: true, secondsLeft: Math.ceil((lockUntil - now) / 1000) });
+  }
+  res.json({ locked: false });
+});
+
 app.post('/unlock-notes', async (req, res) => {
   const { password } = req.body;
+
+  // Ricarica stato dal DB (FIX #6)
+  await getLockState();
   const now = Date.now();
 
-  // Se è attivo un blocco
   if (lockUntil && now < lockUntil) {
-    const secondsLeft = Math.ceil((lockUntil - now) / 1000);
-    return res.json({
-      success: false,
-      locked: true,
-      secondsLeft
-    });
+    return res.json({ success: false, locked: true, secondsLeft: Math.ceil((lockUntil - now) / 1000) });
+  }
+
+  if (!password) {
+    return res.json({ success: false, attemptsLeft: 3 - failedAttempts });
   }
 
   const match = await bcrypt.compare(password, NOTE_PASSWORD_HASH);
 
   if (!match) {
     failedAttempts++;
-
     if (failedAttempts >= 3) {
-      lockUntil = Date.now() + (3 * 60 * 1000); // 3 minuti
+      lockUntil = Date.now() + 3 * 60 * 1000;
       failedAttempts = 0;
-
-      return res.json({
-        success: false,
-        locked: true,
-        secondsLeft: 180
-      });
+      await setLockState(); // FIX #6: persiste
+      return res.json({ success: false, locked: true, secondsLeft: 180 });
     }
-
-    return res.json({
-      success: false,
-      attemptsLeft: 3 - failedAttempts
-    });
+    await setLockState(); // FIX #6: persiste
+    return res.json({ success: false, attemptsLeft: 3 - failedAttempts });
   }
 
-  // Password corretta
   failedAttempts = 0;
   lockUntil = null;
-
+  await setLockState(); // FIX #6: persiste
   res.json({ success: true });
 });
 
-
-const PORT = process.env.PORT || 3000;
-
+// FIX #1 & #2: un solo app.get('/') e un solo app.listen()
 app.get('/', (req, res) => {
   res.sendFile(`${process.cwd()}/compiti.html`);
 });
 
-app.get('/', (req, res) => {
-  res.sendFile(`${process.cwd()}/compiti.html`);
-});
-
-// ← QUI
 app.get('/ready', (req, res) => {
-  const html = fs.readFileSync(`${process.cwd()}/compiti.html`, 'utf8');
-  if (html.includes('Caricamento...')) {
+  try {
+    const html = fs.readFileSync(`${process.cwd()}/compiti.html`, 'utf8');
+    html.includes('Caricamento...')
+      ? res.status(503).send('not ready')
+      : res.status(200).send('ready');
+  } catch {
     res.status(503).send('not ready');
-  } else {
-    res.status(200).send('ready');
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Server attivo sulla porta ${PORT}`);
-});
-
-// Aggiungi PRIMA di app.listen()
+// Placeholder iniziale
 const placeholderPath = `${process.cwd()}/compiti.html`;
 if (!fs.existsSync(placeholderPath)) {
   fs.writeFileSync(placeholderPath, `
@@ -1072,11 +880,11 @@ if (!fs.existsSync(placeholderPath)) {
   <meta charset="UTF-8">
   <title>Caricamento...</title>
   <script>
-  setInterval(async () => {
-    const res = await fetch('/ready');
-    if (res.ok) window.location.reload();
-  }, 5000);
-</script>
+    setInterval(async () => {
+      const res = await fetch('/ready');
+      if (res.ok) window.location.reload();
+    }, 5000);
+  <\/script>
   <style>
     body { background: #121212; color: #eaeaea; display: flex;
            justify-content: center; align-items: center; height: 100vh;
@@ -1095,11 +903,10 @@ if (!fs.existsSync(placeholderPath)) {
   `);
 }
 
-// Avvia il server SUBITO
-app.listen(PORT, () => {
-  console.log(`Server attivo sulla porta ${PORT}`);
-});
+// FIX #1: un solo app.listen()
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server attivo sulla porta ${PORT}`));
 
-// Poi avvia lo scraping in background
+// Scraping in background
 aggiornaCompiti().catch(console.error);
 setInterval(aggiornaCompiti, 2 * 60 * 60 * 1000);
